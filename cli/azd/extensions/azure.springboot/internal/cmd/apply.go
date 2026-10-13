@@ -4,7 +4,9 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -67,7 +69,7 @@ func applyCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 			if subscription := values["AZURE_SUBSCRIPTION_ID"]; subscription != "" {
 				args = append(args, "--subscription", subscription)
 			}
-			if err := execute(cmd.Context(), "az", args, "", os.Environ(),
+			if err := applyContainerAppSettings(cmd.Context(), execute, args,
 				cmd.OutOrStdout(), cmd.ErrOrStderr()); err != nil {
 				return err
 			}
@@ -78,6 +80,15 @@ func applyCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	}
 	addProjectFlag(command)
 	return command
+}
+
+func applyContainerAppSettings(ctx context.Context, run runner, args []string, out, errOut io.Writer) error {
+	// Older Azure CLI releases restart through cmd.exe after automatic extension installation.
+	if err := run(ctx, "az", []string{"containerapp", "update", "--help"}, "", os.Environ(),
+		io.Discard, errOut); err != nil {
+		return fmt.Errorf("preparing the Azure CLI Container Apps command: %w", err)
+	}
+	return run(ctx, "az", args, "", os.Environ(), out, errOut)
 }
 
 func checkOutputFlag(cmd *cobra.Command) error {

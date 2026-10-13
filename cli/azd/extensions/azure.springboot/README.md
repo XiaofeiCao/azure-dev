@@ -70,6 +70,10 @@ Container App instead of assuming a saved azd environment updates a running app.
 Azure CLI and azd authentication are separate prerequisites. All Azure operations
 use the selected template subscription rather than changing global defaults.
 Only public Azure registry hostnames (`*.azurecr.io`) are supported by this prototype.
+`apply` prepares `az containerapp update --help` before sending runtime settings.
+Older Azure CLI releases may restart through the Windows command shell when
+automatically installing the Container Apps CLI extension; preparing it without
+JDBC values prevents that restart from splitting literal `&` query parameters.
 Do not claim live passwordless/database/deployment acceptance from unit tests or
 local compilation alone.
 
