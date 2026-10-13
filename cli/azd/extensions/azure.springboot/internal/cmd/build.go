@@ -210,10 +210,7 @@ func runCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 			settings["POSTGRES_MANAGED_IDENTITY_ENABLED"] = "false"
 			settings["POSTGRES_SCHEMA"] = "notes"
 			env := developerEnvironment(os.Environ(), settings)
-			name, args := "./mvnw", []string{"spring-boot:run"}
-			if runtime.GOOS == "windows" {
-				name, args = "cmd.exe", []string{"/d", "/c", "mvnw.cmd", "spring-boot:run"}
-			}
+			name, args := localMavenCommand(runtime.GOOS)
 			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Spring Boot: running locally with developer authentication.")
 			if err != nil {
 				return err
@@ -224,6 +221,13 @@ func runCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 	}
 	addProjectFlag(command)
 	return command
+}
+
+func localMavenCommand(goos string) (string, []string) {
+	if goos == "windows" {
+		return "cmd.exe", []string{"/d", "/c", `.\mvnw.cmd`, "spring-boot:run"}
+	}
+	return "./mvnw", []string{"spring-boot:run"}
 }
 
 func developerEnvironment(inherited []string, settings map[string]string) []string {

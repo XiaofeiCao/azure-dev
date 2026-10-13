@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -161,6 +162,34 @@ func TestExecuteUsesInjectedWriters(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "go version") {
 		t.Fatal("child output did not reach the injected writer")
+	}
+}
+
+func TestLocalMavenCommand(t *testing.T) {
+	name, args := localMavenCommand("windows")
+	if name != "cmd.exe" || !slices.Equal(args, []string{"/d", "/c", `.\mvnw.cmd`, "spring-boot:run"}) {
+		t.Fatalf("Windows wrapper invocation: %s %v", name, args)
+	}
+	name, args = localMavenCommand("linux")
+	if name != "./mvnw" || !slices.Equal(args, []string{"spring-boot:run"}) {
+		t.Fatalf("Unix wrapper invocation: %s %v", name, args)
+	}
+}
+
+func TestWindowsLocalMavenUsesExplicitWrapper(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows command lookup regression")
+	}
+	t.Setenv("NoDefaultCurrentDirectoryInExePath", "1")
+	dir := t.TempDir()
+	script := "@echo off\r\nif not \"%~1\"==\"spring-boot:run\" exit /b 1\r\nexit /b 0\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "mvnw.cmd"), []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+	name, args := localMavenCommand("windows")
+	var out, errOut bytes.Buffer
+	if err := execute(t.Context(), name, args, dir, os.Environ(), &out, &errOut); err != nil {
+		t.Fatalf("explicit wrapper failed: %v; %s%s", err, out.String(), errOut.String())
 	}
 }
 
