@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../extension.schema.json
+id: azure.springboot
+namespace: springboot
+displayName: Spring Boot prototype
+description: Builds the prepared Spring Boot sample with buildpacks and configures passwordless PostgreSQL.
+version: 0.0.1
+requiredAzdVersion: ">=1.35.1"
+language: go
+capabilities:
+  - custom-commands
+  - metadata
+usage: azd springboot <command> [options]
