@@ -44,6 +44,20 @@ PostgreSQL managed identity is inferred from supported passwordless Spring
 properties or the Azure PostgreSQL JDBC authentication plugin. MySQL managed
 identity is deferred.
 
+To verify locally before deploying, replace `azd up` with:
+
+```sh
+azd provision
+azd spring run
+# After stopping the local app:
+azd deploy
+```
+
+Embedded apps can skip provisioning. PostgreSQL needs an azd login and read access
+to the provisioned database secret. Local and deployed apps in the same azd
+environment share database data. The launcher keeps credentials in memory;
+trusted application code can still log the environment it receives.
+
 ## Initial scope
 
 Single-module Maven applications using Spring Boot executable JAR packaging and
@@ -70,6 +84,10 @@ rejected; use the common `spring.datasource` connection settings instead.
 Ordinary pool tuning is supported.
 The normalized Maven artifact ID must start with a letter, contain no consecutive
 hyphens, and be at most 28 characters so the derived `<name>-app` fits Azure naming rules.
+
+**Bonus:** `azd spring run` launches the generated application locally with its
+embedded database or provisioned PostgreSQL database. MySQL and managed-identity
+local bindings are not supported.
 
 | Active datasource | Generated database |
 | --- | --- |
