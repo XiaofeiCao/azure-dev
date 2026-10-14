@@ -13,7 +13,7 @@ func NewRootCommand() *cobra.Command {
 	rootCmd, extCtx := azdext.NewExtensionRootCommand(azdext.ExtensionCommandOptions{
 		Name:  "spring",
 		Use:   "spring <command> [options]",
-		Short: "Prepare a Spring Boot application for deployment to Azure",
+		Short: "Prepare and run a Spring Boot application for Azure",
 	})
 
 	rootCmd.SilenceUsage = true
@@ -25,6 +25,7 @@ func NewRootCommand() *cobra.Command {
 	rootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
 
 	rootCmd.AddCommand(newInitCommand(extCtx))
+	rootCmd.AddCommand(newRunCommand(extCtx))
 	rootCmd.AddCommand(newVersionCommand(&extCtx.OutputFormat))
 	rootCmd.AddCommand(newMetadataCommand(rootCmd))
 

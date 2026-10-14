@@ -180,6 +180,8 @@ dictionaries:
 overrides:
   - filename: extensions/azure.springboot/**
     words:
+      - datasourceproperties
+      - dbcp
       - Hikari
       - hsqldb
       - jndi
@@ -189,6 +191,7 @@ overrides:
       - springboot
       - sslmode
       - temurin
+      - zaxxer
   - filename: "{docs/extensions/contract-versioning.md,grpc/README.md}"
     words:
       - generateprojectclient

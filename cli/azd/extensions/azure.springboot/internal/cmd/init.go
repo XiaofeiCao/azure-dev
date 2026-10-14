@@ -27,7 +27,7 @@ func newInitCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 		Use:   "init",
 		Short: "Infer active Spring dependencies and generate an azd project",
 		Long: `Inspect a trusted single-module Spring Boot Maven application and generate
-azure.yaml, Container Apps Bicep, and deployment-only container/configuration files.
+azure.yaml, Container Apps Bicep, and container/runtime configuration files.
 Use standard Spring configuration, including SPRING_PROFILES_ACTIVE, to activate
 database alternatives. Embedded databases do not create a cloud database.
 

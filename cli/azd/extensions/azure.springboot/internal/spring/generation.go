@@ -71,7 +71,7 @@ func Generate(ctx context.Context, application *Application) (_ *Plan, resultErr
 		{Name: "SERVER_PORT", Value: strconv.Itoa(application.Port)},
 	}
 	var binding strings.Builder
-	binding.WriteString("# Deployment-only overrides. Credentials are supplied through Container Apps secrets.\n")
+	binding.WriteString("# Runtime overrides. Credentials are supplied by the launcher or Container Apps secrets.\n")
 	for _, requirement := range application.Requirements {
 		provider, ok := databaseProviders[requirement.Kind]
 		if !ok {
