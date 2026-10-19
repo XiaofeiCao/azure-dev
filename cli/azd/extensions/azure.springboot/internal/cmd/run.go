@@ -20,15 +20,20 @@ func newRunCommand(extCtx *azdext.ExtensionContext) *cobra.Command {
 		Short: "Run a generated Spring Boot Maven application locally",
 		Long: `Run a trusted single-module Maven application prepared by azd spring init.
 Embedded applications need no Azure login or provisioning. PostgreSQL applications
-use the current provisioned azd environment and require secret-read access to its
-Key Vault. Local and deployed applications in that environment share database data.
+read the selected provisioned azd environment's database outputs and password.
+The database firewall must separately allow your developer IP. Local and deployed
+applications in that environment share database data.
 
 This command executes the project's Maven wrapper or Maven on PATH. It does not
-provision or deploy resources. MySQL, managed identity, and extra Maven/application
-arguments are not supported. --environment applies only to PostgreSQL bindings.
+provision, deploy, or change firewall rules. Both generated and application-owned
+Dockerfiles are supported; local execution uses Maven, not Docker.
+MySQL, managed identity, and extra Maven/application arguments are not supported.
+--environment applies only to PostgreSQL bindings. Saved profiles and datasource
+bindings are used; inherited conflicting overrides are rejected.
+PostgreSQL verify-ca/verify-full currently require the generated Linux CA bundle.
 Application output is streamed; --output is not supported. Stop with Ctrl+C.
-Credentials are not saved or printed by the launcher; trusted application code
-can still log the environment it receives.`,
+The provisioning hook stores the password in azd environment state. This launcher
+does not save or print it; trusted application code can still log its environment.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if cmd.Flags().Changed("output") {

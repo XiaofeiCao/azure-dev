@@ -60,7 +60,8 @@ func TestRunHelp(t *testing.T) {
 func TestRunEmbeddedCommand(t *testing.T) {
 	directory := t.TempDir()
 	plan, err := spring.Generate(t.Context(), &spring.Application{
-		Name: "inventory", JavaVersion: 17, JarName: "inventory.jar", Port: 9090, Profiles: []string{"release"},
+		Name: "inventory", JavaVersion: 17, JarName: "inventory.jar", BuildDirectory: "target",
+		Port: 9090, Profiles: []string{"release"},
 	})
 	require.NoError(t, err)
 	require.NoError(t, plan.Write(t.Context(), directory))

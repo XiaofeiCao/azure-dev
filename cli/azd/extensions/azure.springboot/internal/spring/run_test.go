@@ -6,10 +6,10 @@ package spring
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"maps"
 	"os"
 	osexec "os/exec"
 	"path/filepath"
@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -32,13 +31,10 @@ import (
 	"github.com/azure/azure-dev/cli/azd/test/mocks/mockexec"
 )
 
-const runDatabaseID = "/subscriptions/test-sub/resourceGroups/test-rg/providers/" +
-	"Microsoft.DBforPostgreSQL/flexibleServers/test-server/databases/inventory_db"
-
 func runFixture(t *testing.T, kind ResourceKind) string {
 	t.Helper()
 	a := &Application{Name: "inventory", JavaVersion: 17, JarName: "inventory.jar",
-		Port: 9090, Profiles: []string{"release"}}
+		Port: 9090, Profiles: []string{"release"}, BuildDirectory: "target"}
 	if kind != "" {
 		options, err := jdbcOptions(kind, "connectTimeout=10")
 		require.NoError(t, err)
@@ -46,12 +42,184 @@ func runFixture(t *testing.T, kind ResourceKind) string {
 			Kind: kind, Name: "inventory_db", Authentication: "password", JDBCOptions: options,
 		}}
 	}
+	return writeRunFixture(t, a)
+}
+
+func writeRunFixture(t *testing.T, a *Application) string {
+	t.Helper()
 	plan, err := Generate(t.Context(), a)
 	require.NoError(t, err)
 	directory := t.TempDir()
+	if a.Dockerfile != "" {
+		writeFixture(t, directory, a.Dockerfile, "FROM scratch\n")
+	}
 	require.NoError(t, plan.Write(t.Context(), directory))
 	writeFixture(t, directory, "pom.xml", "<project><packaging>jar</packaging></project>")
 	return directory
+}
+
+func setRunParameter(t *testing.T, directory, file, key string, value any) {
+	t.Helper()
+	name := filepath.Join(directory, "infra", file+".parameters.json")
+	data, err := os.ReadFile(name) //nolint:gosec // Fixed test fixture parameter files.
+	require.NoError(t, err)
+	var document struct {
+		Parameters map[string]map[string]any `json:"parameters"`
+	}
+	require.NoError(t, json.Unmarshal(data, &document))
+	if value == nil {
+		delete(document.Parameters, key)
+	} else {
+		document.Parameters[key] = map[string]any{"value": value}
+	}
+	data, err = json.Marshal(document)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(name, data, 0600))
+}
+
+func TestRunSavedParameters(t *testing.T) {
+	for _, tt := range []struct {
+		name, key, message string
+		value              any
+	}{
+		{"missing", "port", "missing or null", nil},
+		{"null", "port", "missing or null", json.RawMessage("null")},
+		{"wrong type", "port", "parameter types", "9090"},
+		{"out of range", "port", "parameter types", 70000},
+		{"wrong profile", "profiles", "profile selection", []string{"not a profile"}},
+		{"disagreement", "port", "parameters disagree", 8080},
+		{"mysql", "engine", "only embedded", "mysql"},
+		{"managed identity", "authentication", "password authentication", "managedIdentity"},
+		{"literal password", "password", "parameter binding", "private"},
+		{"literal host", "host", "parameter binding", "user:private@host?sig=hidden"},
+		{"wrong username", "username", "parameter binding", "other"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			directory := runFixture(t, PostgreSQL)
+			setRunParameter(t, directory, "application", tt.key, tt.value)
+			_, err := loadRunProject(t.Context(), directory)
+			require.ErrorContains(t, err, tt.message)
+			require.NotContains(t, err.Error(), "private")
+			require.NotContains(t, err.Error(), "sig=hidden")
+		})
+	}
+	for _, file := range []string{"main", "application"} {
+		for _, contents := range []string{"", "{}", `{"parameters":{"port":9090}}`} {
+			directory := runFixture(t, "")
+			writeFixture(t, directory, "infra/"+file+".parameters.json", contents)
+			_, err := loadRunProject(t.Context(), directory)
+			require.Error(t, err)
+		}
+	}
+	directory := runFixture(t, "")
+	require.NoError(t, os.Remove(filepath.Join(directory, "infra", "main.parameters.json")))
+	_, err := loadRunProject(t.Context(), directory)
+	require.ErrorContains(t, err, "fresh project")
+	directory = runFixture(t, "")
+	root, err := os.OpenRoot(directory)
+	require.NoError(t, err)
+	defer root.Close()
+	data, err := root.ReadFile("azure.yaml")
+	require.NoError(t, err)
+	require.NoError(t, root.WriteFile("azure.yaml", append(data,
+		[]byte("\nresources:\n  legacy:\n    type: host.containerapp\n")...), 0600))
+	_, err = loadRunProject(t.Context(), directory)
+	require.ErrorContains(t, err, "legacy")
+}
+
+func TestRunGeneratedBindingModes(t *testing.T) {
+	for _, external := range []bool{false, true} {
+		for _, adopted := range []bool{false, true} {
+			t.Run(fmt.Sprintf("postgres=%t/dockerfile=%t", external, adopted), func(t *testing.T) {
+				a := &Application{
+					Name: "inventory", JavaVersion: 17, JarName: "inventory.jar", BuildDirectory: "target",
+					Port: 9090, Profiles: []string{"release"},
+					Embedded: &EmbeddedBinding{
+						Engine: "h2", URL: "jdbc:h2:mem:catalog", URLConfigured: true, Driver: "org.h2.Driver",
+					},
+				}
+				if external {
+					a.Embedded = nil
+					options, err := jdbcOptions(PostgreSQL, "sslmode=require")
+					require.NoError(t, err)
+					a.Requirements = []Requirement{{
+						Kind: PostgreSQL, Name: "inventory_db", Authentication: "password",
+						JDBCOptions: options, Driver: "org.postgresql.Driver",
+					}}
+				}
+				if adopted {
+					a.Dockerfile = "Dockerfile"
+				}
+				directory := writeRunFixture(t, a)
+				if !external {
+					writeFixture(t, directory, "src/main/resources/application.properties",
+						"spring.datasource.url=${UNRESOLVED_AT_RUNTIME}\n")
+				}
+				p, err := loadRunProject(t.Context(), directory)
+				require.NoError(t, err)
+				require.Equal(t, adopted, p.binding.EnvironmentBindings)
+				require.NoError(t, checkRunOverrides(t.Context(), directory, p, nil))
+				runner := mockexec.NewMockCommandRunner()
+				runner.MockToolInPath("mvn", nil)
+				runner.When(func(exec.RunArgs, string) bool { return true }).
+					RespondFn(func(args exec.RunArgs) (exec.RunResult, error) {
+						name := "SPRING_DATASOURCE_URL=jdbc:h2:mem:catalog"
+						if external {
+							name = "SPRING_DATASOURCE_DRIVERCLASSNAME=org.postgresql.Driver"
+						}
+						require.Contains(t, args.Env, name)
+						return exec.RunResult{}, nil
+					})
+				resolve := noPostgres(t)
+				if external {
+					resolve = func(context.Context, string, string) (map[string]string, error) {
+						return map[string]string{"POSTGRES_HOST": "host", "POSTGRES_PASSWORD": "secret"}, nil
+					}
+				}
+				require.NoError(t, run(t.Context(), RunOptions{Directory: directory}, runner, nil, resolve))
+				if external {
+					properties := p.datasourceProperties("host", "secret")
+					require.Equal(t, "org.postgresql.Driver", properties["spring.datasource.driver-class-name"])
+				} else {
+					require.Equal(t, "jdbc:h2:mem:catalog", p.datasourceProperties("", "")["spring.datasource.url"])
+					require.ErrorContains(t, checkRunOverrides(t.Context(), directory, p,
+						[]string{"SPRING_DATASOURCE_URL=jdbc:h2:mem:other"}), "saved embedded")
+				}
+			})
+		}
+	}
+}
+
+func TestRunTLS(t *testing.T) {
+	for _, mode := range []string{"require", "verify-ca", "verify-full"} {
+		options, err := jdbcOptions(PostgreSQL, "sslmode="+mode)
+		require.NoError(t, err)
+		require.NoError(t, validateRunJDBCOptions(options))
+		if mode != "require" {
+			require.ErrorContains(t, checkRunTLS(options, "windows"), "never downgraded")
+		} else {
+			require.NoError(t, checkRunTLS(options, "windows"))
+		}
+
+	}
+	for _, options := range []string{
+		"sslmode=disable", "sslmode=require&sslrootcert=private", "sslmode=require&password=private",
+		"sslmode=%invalid", "sslmode=verify-full&sslrootcert=private", "sslmode=require&sslmode=require",
+	} {
+		require.Error(t, validateRunJDBCOptions(options))
+	}
+}
+
+func TestPostgresEnvironmentReadFailure(t *testing.T) {
+	environments := &runEnvironmentClient{}
+	environments.On("GetValues", mock.Anything, &azdext.GetEnvironmentRequest{Name: "selected"}).
+		Return(nil, errors.New("https://user:private@host/?sig=hidden#fragment")).Once()
+	_, err := resolvePostgresEnvironment(t.Context(), "selected", "inventory_db", environments)
+	require.ErrorContains(t, err, "reading the selected azd environment")
+	for _, sensitive := range []string{"user:", "private", "sig=hidden", "fragment"} {
+		require.NotContains(t, err.Error(), sensitive)
+	}
+	environments.AssertExpectations(t)
 }
 
 func noPostgres(t *testing.T) func(context.Context, string, string) (map[string]string, error) {
@@ -94,12 +262,11 @@ func TestLoadRunProjectRejectsModifiedContract(t *testing.T) {
 			"<modules><module>child</module></modules>", "single-module"},
 		{"service path", "azure.yaml", "project: .", "project: child", "root Maven service"},
 		{"wrong host", "azure.yaml", "host: containerapp", "host: appservice", "root Maven service"},
-		{"different host environment", "azure.yaml", "file:/app/config/application-azd.properties",
-			"file:/other/application.properties", "host environment differs"},
+		{"different module", "azure.yaml", "module: application", "module: other", "root Maven service"},
 		{"multiple services", "azure.yaml", "services:",
 			"services:\n    extra:\n        project: .\n        host: containerapp\n        language: docker",
 			"single service"},
-		{"extra dependency", "azure.yaml", "uses:\n", "uses:\n      - unknown\n", "cannot parse azure.yaml"},
+		{"extra dependency", "azure.yaml", "project: .", "project: .\n        uses: [unknown]", "root Maven service"},
 		{"modified password", ".azd-spring/application-azd.properties", "${POSTGRES_PASSWORD}",
 			"must-not-be-used", "do not match"},
 		{"unsafe jdbc option", ".azd-spring/application-azd.properties", "connectTimeout=10",
@@ -149,8 +316,8 @@ func TestRunEnvironmentAndCommand(t *testing.T) {
 					require.Equal(t, "keep", env["UNRELATED"])
 					require.Equal(t, "release", env["SPRING_PROFILES_ACTIVE"])
 					require.Equal(t, "9090", env["SERVER_PORT"])
-					expected := fileURI(filepath.Join(directory, ".azd-spring", "application-azd.properties"), runtime.GOOS)
-					require.Equal(t, expected, env["SPRING_CONFIG_ADDITIONAL_LOCATION"])
+					require.Equal(t, "none", env["SPRING_PROFILES_DEFAULT"])
+					require.NotContains(t, env, "SPRING_CONFIG_ADDITIONAL_LOCATION")
 					require.NotContains(t, strings.Join(args.Args, " "), "runtime-password")
 					if kind == PostgreSQL {
 						require.Equal(t, "runtime-password", env["POSTGRES_PASSWORD"])
@@ -158,6 +325,10 @@ func TestRunEnvironmentAndCommand(t *testing.T) {
 						require.Equal(t, "5432", env["POSTGRES_PORT"])
 						require.Equal(t, "inventory_db", env["POSTGRES_DATABASE"])
 						require.Equal(t, "admin", env["POSTGRES_USERNAME"])
+						require.Equal(t, "azdadmin", env["SPRING_DATASOURCE_USERNAME"])
+						require.Equal(t, "runtime-password", env["SPRING_DATASOURCE_PASSWORD"])
+						require.Equal(t, "jdbc:postgresql://server.postgres.database.azure.com:5432/"+
+							"inventory_db?connectTimeout=10&sslmode=require", env["SPRING_DATASOURCE_URL"])
 						require.NotContains(t, env, "DOTENV_ONLY")
 					} else {
 						require.NotContains(t, env, "POSTGRES_HOST")
@@ -219,6 +390,7 @@ func TestRunOverrides(t *testing.T) {
 		{"custom pool", "SPRING_DATASOURCE_TYPE=private", "spring.datasource.type"},
 		{"tomcat", "SPRING_DATASOURCE_TOMCAT_URL=private", "spring.datasource.tomcat.url"},
 		{"dbcp", "SPRING_DATASOURCE_DBCP2_PASSWORD=private", "spring.datasource.dbcp2.password"},
+		{"empty driver", "SPRING_DATASOURCE_TOMCAT_DRIVERCLASSNAME=", "spring.datasource.tomcat.driver-class-name"},
 		{"hikari map", "SPRING_DATASOURCE_HIKARI_DATASOURCEPROPERTIES_USER=private", "Hikari"},
 		{"json url", `SPRING_APPLICATION_JSON={"spring":{"datasource":{"url":"private"}}}`, "spring.datasource.url"},
 		{"json profile", `SPRING_APPLICATION_JSON={"spring.profiles.active":"private"}`, "spring.profiles"},
@@ -279,29 +451,15 @@ func (c *runEnvironmentClient) GetValues(
 	return response, args.Error(1)
 }
 
-type runAccountClient struct {
-	azdext.AccountServiceClient
-	mock.Mock
-}
-
-func (c *runAccountClient) LookupTenant(
-	ctx context.Context, request *azdext.LookupTenantRequest, _ ...grpc.CallOption,
-) (*azdext.LookupTenantResponse, error) {
-	args := c.Called(ctx, request)
-	response, _ := args.Get(0).(*azdext.LookupTenantResponse)
-	return response, args.Error(1)
-}
-
 func postgresOutputs() map[string]string {
 	//nolint:gosec // Deliberately stale test credentials, never used for authentication.
 	return map[string]string{
-		"AZURE_RESOURCE_INVENTORY_DB_ID": runDatabaseID,
-		"AZURE_RESOURCE_APP_ID": "/subscriptions/test-sub/resourceGroups/test-rg/providers/" +
-			"Microsoft.App/containerApps/app",
-		"AZURE_SUBSCRIPTION_ID":    "test-sub",
-		"AZURE_KEY_VAULT_ENDPOINT": "https://test-vault.vault.azure.net/",
-		"AZURE_TENANT_ID":          "resource-tenant-not-for-guest-access",
-		"POSTGRES_PASSWORD":        "stale-dotenv-password",
+		"SPRING_DATABASE_HOST":        "test-server.postgres.database.azure.com",
+		"SPRING_DATABASE_SERVER_NAME": "test-server",
+		"SPRING_DATABASE_NAME":        "inventory_db",
+		"SPRING_DATABASE_PASSWORD":    "resolved-only",
+		"POSTGRES_PASSWORD":           "stale-dotenv-password",
+		"UNRELATED_SECRET":            "never-forward",
 	}
 }
 
@@ -316,7 +474,7 @@ func environmentValues(values map[string]string) *azdext.KeyValueListResponse {
 func TestPostgresEnvironmentSelection(t *testing.T) {
 	for _, environment := range []string{"", "other"} {
 		t.Run("environment="+environment, func(t *testing.T) {
-			environments, account := &runEnvironmentClient{}, &runAccountClient{}
+			environments := &runEnvironmentClient{}
 			selected := environment
 			if selected == "" {
 				selected = "current"
@@ -325,28 +483,18 @@ func TestPostgresEnvironmentSelection(t *testing.T) {
 			}
 			values := postgresOutputs()
 			if selected == "other" {
-				values["AZURE_RESOURCE_INVENTORY_DB_ID"] = strings.ReplaceAll(runDatabaseID, "test-server", "other-server")
+				values["SPRING_DATABASE_HOST"] = "other-server.postgres.database.azure.com"
+				values["SPRING_DATABASE_SERVER_NAME"] = "other-server"
 			}
-			values["AZURE_RESOURCE_ARBITRARY_NORMALIZED_ID"] = values["AZURE_RESOURCE_INVENTORY_DB_ID"]
-			delete(values, "AZURE_RESOURCE_INVENTORY_DB_ID")
 			environments.On("GetValues", mock.Anything, &azdext.GetEnvironmentRequest{Name: selected}).
 				Return(environmentValues(values), nil).Once()
-			account.On("LookupTenant", mock.Anything, &azdext.LookupTenantRequest{SubscriptionId: "test-sub"}).
-				Return(&azdext.LookupTenantResponse{TenantId: "user-access-tenant"}, nil).Once()
-			called := false
-			result, err := resolvePostgresEnvironment(t.Context(), environment, "inventory_db", environments, account,
-				func(_ context.Context, tenant string, id *arm.ResourceID, vault string) (map[string]string, error) {
-					called = true
-					require.Equal(t, "user-access-tenant", tenant)
-					require.Equal(t, values["AZURE_RESOURCE_ARBITRARY_NORMALIZED_ID"], id.String())
-					require.Equal(t, "https://test-vault.vault.azure.net", vault)
-					return map[string]string{"POSTGRES_PASSWORD": "resolved-only"}, nil
-				})
+			result, err := resolvePostgresEnvironment(t.Context(), environment, "inventory_db", environments)
 			require.NoError(t, err)
-			require.True(t, called)
-			require.Equal(t, map[string]string{"POSTGRES_PASSWORD": "resolved-only"}, result)
+			require.Equal(t, map[string]string{
+				"POSTGRES_HOST": values["SPRING_DATABASE_HOST"], "POSTGRES_PORT": "5432",
+				"POSTGRES_DATABASE": "inventory_db", "POSTGRES_USERNAME": "azdadmin", "POSTGRES_PASSWORD": "resolved-only",
+			}, result)
 			environments.AssertExpectations(t)
-			account.AssertExpectations(t)
 		})
 	}
 }
@@ -355,7 +503,7 @@ func TestPostgresMissingCurrentEnvironment(t *testing.T) {
 	environments := &runEnvironmentClient{}
 	environments.On("GetCurrent", mock.Anything, &azdext.EmptyRequest{}).
 		Return(nil, errors.New("https://user:private@host/?sig=hidden#fragment")).Once()
-	_, err := resolvePostgresEnvironment(t.Context(), "", "inventory_db", environments, nil, nil)
+	_, err := resolvePostgresEnvironment(t.Context(), "", "inventory_db", environments)
 	local, ok := errors.AsType[*azdext.LocalError](err)
 	require.True(t, ok)
 	require.Contains(t, local.Suggestion, "azd provision")
@@ -363,48 +511,19 @@ func TestPostgresMissingCurrentEnvironment(t *testing.T) {
 	environments.AssertExpectations(t)
 }
 
-func TestPostgresTenantFailures(t *testing.T) {
-	for _, tt := range []struct {
-		name     string
-		response *azdext.LookupTenantResponse
-		err      error
-	}{
-		{"no tenant", &azdext.LookupTenantResponse{}, nil},
-		{"lookup denied", nil, errors.New("https://user:private@host/?sig=hidden")},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			environments, account := &runEnvironmentClient{}, &runAccountClient{}
-			environments.On("GetValues", mock.Anything, &azdext.GetEnvironmentRequest{Name: "selected"}).
-				Return(environmentValues(postgresOutputs()), nil).Once()
-			account.On("LookupTenant", mock.Anything, &azdext.LookupTenantRequest{SubscriptionId: "test-sub"}).
-				Return(tt.response, tt.err).Once()
-			_, err := resolvePostgresEnvironment(t.Context(), "selected", "inventory_db", environments, account, nil)
-			require.ErrorContains(t, err, "user-access tenant")
-			require.NotContains(t, err.Error(), "private")
-			environments.AssertExpectations(t)
-			account.AssertExpectations(t)
-		})
-	}
-}
-
 func TestPostgresRejectsBadOutputs(t *testing.T) {
 	for _, tt := range []struct {
 		name, key, value, message string
 	}{
-		{"missing database", "AZURE_RESOURCE_INVENTORY_DB_ID", "", "no matching PostgreSQL"},
-		{"malformed id", "AZURE_RESOURCE_INVENTORY_DB_ID", "https://user:private@host/?sig=hidden",
-			"no matching PostgreSQL"},
-		{"wrong type", "AZURE_RESOURCE_INVENTORY_DB_ID",
-			strings.ReplaceAll(runDatabaseID, "Microsoft.DBforPostgreSQL", "Microsoft.DBforMySQL"),
-			"no matching PostgreSQL"},
-		{"subscription", "AZURE_SUBSCRIPTION_ID", "another-sub", "subscription"},
-		{"ambiguous", "AZURE_RESOURCE_OTHER_ID",
-			strings.ReplaceAll(runDatabaseID, "test-server", "other-server"), "multiple provisioned"},
-		{"no vault", "AZURE_KEY_VAULT_ENDPOINT", "", "invalid AZURE_KEY_VAULT_ENDPOINT"},
-		{"vault userinfo", "AZURE_KEY_VAULT_ENDPOINT", "https://user:private@test.vault.azure.net/", "invalid"},
-		{"vault query", "AZURE_KEY_VAULT_ENDPOINT", "https://test.vault.azure.net/?sig=hidden#fragment", "invalid"},
-		{"vault host", "AZURE_KEY_VAULT_ENDPOINT", "https://test.vault.azure.net.attacker.example/", "invalid"},
-		{"vault http", "AZURE_KEY_VAULT_ENDPOINT", "http://test.vault.azure.net/", "invalid"},
+		{"missing database", "SPRING_DATABASE_NAME", "", "no matching PostgreSQL"},
+		{"wrong database", "SPRING_DATABASE_NAME", "other_db", "no matching PostgreSQL"},
+		{"missing host", "SPRING_DATABASE_HOST", "", "invalid PostgreSQL"},
+		{"host userinfo", "SPRING_DATABASE_HOST", "user:private@test.postgres.database.azure.com", "invalid"},
+		{"host query", "SPRING_DATABASE_HOST", "test.postgres.database.azure.com/?sig=hidden#fragment", "invalid"},
+		{"host suffix", "SPRING_DATABASE_HOST", "test-server.postgres.database.azure.com.attacker.example", "invalid"},
+		{"wrong server", "SPRING_DATABASE_SERVER_NAME", "another-server", "invalid"},
+		{"no server", "SPRING_DATABASE_SERVER_NAME", "", "invalid"},
+		{"no password", "SPRING_DATABASE_PASSWORD", "", "SPRING_DATABASE_PASSWORD"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			values := postgresOutputs()
@@ -412,7 +531,7 @@ func TestPostgresRejectsBadOutputs(t *testing.T) {
 			environments := &runEnvironmentClient{}
 			environments.On("GetValues", mock.Anything, &azdext.GetEnvironmentRequest{Name: "selected"}).
 				Return(environmentValues(values), nil).Once()
-			_, err := resolvePostgresEnvironment(t.Context(), "selected", "inventory_db", environments, nil, nil)
+			_, err := resolvePostgresEnvironment(t.Context(), "selected", "inventory_db", environments)
 			require.ErrorContains(t, err, tt.message)
 			for _, sensitive := range []string{"private", "sig=hidden", "fragment"} {
 				require.NotContains(t, err.Error(), sensitive)
@@ -422,58 +541,7 @@ func TestPostgresRejectsBadOutputs(t *testing.T) {
 	}
 }
 
-func TestPostgresConnection(t *testing.T) {
-	id, err := arm.ParseResourceID(runDatabaseID)
-	require.NoError(t, err)
-	properties := map[string]any{
-		"fullyQualifiedDomainName": "test-server.postgres.database.azure.com", "administratorLogin": "actual-admin",
-	}
-	for _, tt := range []struct {
-		name, missing, password, message string
-		serviceErr                       error
-		secretErr                        error
-	}{
-		{name: "success", password: "runtime-password"},
-		{name: "no host", missing: "fullyQualifiedDomainName", message: "no valid hostname"},
-		{name: "no admin", missing: "administratorLogin", message: "no valid hostname"},
-		{name: "empty secret", message: "secret is empty"},
-		{name: "server denied", serviceErr: &azcore.ResponseError{StatusCode: 403}, message: "HTTP 403"},
-		{name: "secret denied", secretErr: &azcore.ResponseError{StatusCode: 403}, message: "HTTP 403"},
-		{name: "secret missing", secretErr: &azcore.ResponseError{StatusCode: 404}, message: "HTTP 404"},
-		{name: "unsafe error", secretErr: errors.New("https://user:private@host/?sig=hidden#fragment"),
-			message: "Key Vault"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			props := maps.Clone(properties)
-			delete(props, tt.missing)
-			result, err := readPostgresConnection(t.Context(), id, "https://vault.vault.azure.net",
-				func(_ context.Context, server string) (any, error) {
-					require.Equal(t, id.Parent.String(), server)
-					return props, tt.serviceErr
-				}, func(_ context.Context, reference string) (string, error) {
-					require.Equal(t,
-						"@Microsoft.KeyVault(SecretUri=https://vault.vault.azure.net/secrets/postgres-password)", reference)
-					return tt.password, tt.secretErr
-				})
-			if tt.message != "" {
-				require.ErrorContains(t, err, tt.message)
-				require.Nil(t, result)
-				for _, sensitive := range []string{"private", "sig=hidden", "fragment", "runtime-password"} {
-					require.NotContains(t, err.Error(), sensitive)
-				}
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, map[string]string{
-				"POSTGRES_HOST": "test-server.postgres.database.azure.com", "POSTGRES_PORT": "5432",
-				"POSTGRES_DATABASE": "inventory_db", "POSTGRES_USERNAME": "actual-admin",
-				"POSTGRES_PASSWORD": "runtime-password",
-			}, result)
-		})
-	}
-}
-
-func TestMavenWrapperAndFileURI(t *testing.T) {
+func TestMavenWrapper(t *testing.T) {
 	for _, goos := range []string{"windows", "linux"} {
 		t.Run(goos, func(t *testing.T) {
 			directory := t.TempDir()
@@ -492,35 +560,6 @@ func TestMavenWrapperAndFileURI(t *testing.T) {
 			}
 			require.Equal(t, filepath.Join(directory, expected), command)
 		})
-	}
-	require.Equal(t, "file:///C:/my%20app/%23data/application.properties",
-		fileURI(`C:\my app\#data\application.properties`, "windows"))
-	require.Equal(t, "file://server/share/my%20app/application.properties",
-		fileURI(`\\server\share\my app\application.properties`, "windows"))
-	require.Equal(t, "file:///my%20app/%23data/application.properties",
-		fileURI("/my app/#data/application.properties", "linux"))
-}
-
-func TestPostgresInvalidServerMetadata(t *testing.T) {
-	id, err := arm.ParseResourceID(runDatabaseID)
-	require.NoError(t, err)
-	for _, props := range []any{
-		nil, "not an object",
-		//nolint:gosec // Deliberately invalid URL tests credential non-disclosure.
-		map[string]any{"fullyQualifiedDomainName": "https://user:private@host/?sig=hidden", "administratorLogin": "admin"},
-		map[string]any{
-			"fullyQualifiedDomainName": "host.postgres.database.azure.com", "administratorLogin": "admin",
-			"authConfig": map[string]any{"passwordAuth": "Disabled"},
-		},
-	} {
-		_, err := readPostgresConnection(t.Context(), id, "https://test.vault.azure.net",
-			func(context.Context, string) (any, error) { return props, nil },
-			func(context.Context, string) (string, error) {
-				t.Fatal("invalid server metadata must not trigger a secret lookup")
-				return "", nil
-			})
-		require.Error(t, err)
-		require.NotContains(t, err.Error(), "private")
 	}
 }
 
