@@ -131,6 +131,14 @@ multiple handlers and workflow steps are resolved.
 
 ## Extension Design Guidelines
 
+For a custom-command example that combines generated project configuration,
+selected-environment reads, and local child-process execution, see the beta
+[Spring Boot extension](../../cli/azd/extensions/azure.springboot/README.md#run-locally).
+Its local runner validates saved bindings before accessing the environment,
+keeps credentials out of command arguments and diagnostic output, streams through
+injected writers, and cancels the Maven process tree. It does not provision or
+change networking.
+
 - **Extend existing command categories** — Use verb-first structure (e.g., `azd add <resource>`)
 - **Reuse parameter patterns** — Use established flags like `--subscription`, `--name`, `--type`
 - **Integrate with help** — Make your extension discoverable through `azd help`

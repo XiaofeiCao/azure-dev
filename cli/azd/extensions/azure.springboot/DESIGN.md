@@ -110,6 +110,35 @@ flowchart TD
 - **Preservation:** do not rewrite application source/configuration except for an
   explicitly confirmed credential repair, and do not overwrite existing deployment files.
 
+## Local execution
+
+`azd spring run` adds a local path alongside cloud deployment; it does not alter
+initialization, provisioning, or deployment. Read saved launch facts from the
+generated nested main/application parameter values and reject inconsistent
+contracts. Do not re-infer deployment choices from the current shell.
+Support one trusted Maven application with embedded storage or a generated
+PostgreSQL/password binding, including application-owned root Dockerfiles.
+Local execution uses Maven, not the deployment image.
+
+Embedded execution needs no environment or Azure access. PostgreSQL execution
+reads only the explicit/current environment's database host/server/name/password
+outputs and uses the generated username. No ARM/Key Vault resolution, environment
+creation, or secret-bearing runtime file is needed. The password already persists
+in azd environment state because of the provisioning hook.
+
+Pin saved profiles and datasource values in the Maven child's environment,
+disable runtime profile defaults, and reject conflicting higher-precedence or
+pool-specific settings. Preserve JDBC TLS verification; the generated Linux CA
+bundle must be available for local `verify-ca`/`verify-full` execution.
+Stream through injected writers, suppress environment debug dumps, and propagate
+cancellation to the Maven process tree. Trusted application code can still
+disclose its own environment.
+
+Developer-IP authorization is a separate, manual firewall prerequisite.
+The launcher never provisions, deploys, or changes networking. Local and deployed
+applications share database state. Managed-identity/MySQL local execution and
+legacy core-resource-scaffold projects are outside this local-run contract.
+
 ## Current Limitations
 
 The implementation supports one single-module Maven Spring Boot HTTP application

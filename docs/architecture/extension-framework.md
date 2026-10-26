@@ -209,6 +209,13 @@ for registration and provider requirements.
 
 First-party extensions live in `cli/azd/extensions/` and are registered in `cli/azd/extensions/registry.json`.
 
+The Spring Boot beta extension is currently built and installed locally, not
+published in the registry. Its `spring run` command launches trusted generated
+Maven applications with saved embedded or PostgreSQL/password bindings. It reads
+the selected environment only for PostgreSQL and does not provision resources,
+run Docker, or change firewall rules. See the
+[Spring local-execution contract](../../cli/azd/extensions/azure.springboot/DESIGN.md#local-execution).
+
 ## Detailed Reference
 
 - [Extension Framework Guide](../../cli/azd/docs/extensions/extension-framework.md) — Getting started

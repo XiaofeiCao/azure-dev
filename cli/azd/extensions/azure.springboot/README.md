@@ -1,7 +1,8 @@
 # Spring Boot (Beta)
 
-Beta extension for `azd spring init`. It infers a Spring Boot application's
-active database and generates an azd project without requiring an existing `azure.yaml`.
+Beta extension for `azd spring init` and `azd spring run`. It infers a Spring Boot
+application's active database, generates an azd project without requiring an
+existing `azure.yaml`, and runs supported generated Maven applications locally.
 It is not yet published to the extension registry.
 
 See [DESIGN.md](DESIGN.md) for the resource model and configuration-resolution contract.
@@ -43,6 +44,83 @@ confirmations, not missing choices. Interactive prompts use the azd host channel
 PostgreSQL managed identity is inferred from supported passwordless Spring
 properties or the Azure PostgreSQL JDBC authentication plugin. MySQL managed
 identity is deferred.
+
+## Run locally
+
+For an embedded application, use `azd spring init` followed by `azd spring run`.
+No azd environment, Azure login, provisioning, or Docker daemon is needed.
+
+For PostgreSQL/password, start from a fresh trusted application directory:
+
+```sh
+azd spring init --profiles postgres
+azd provision
+# Separately allow your developer IP as described below.
+azd spring run
+# After stopping the local app:
+azd deploy
+```
+
+`azd provision` can guide missing environment setup interactively. For scripts,
+select/configure an environment before provisioning. `azd spring run --environment dev`
+uses only that named environment; without the flag it uses the current environment.
+An explicitly empty environment name is rejected; omit the flag to use the current one.
+It never creates an environment, provisions, deploys, or searches other environments.
+Local and deployed apps in the same environment share database data.
+
+The launcher reads the generated `infra/main.parameters.json` and
+`infra/application.parameters.json` nested `parameters.<name>.value` contract,
+including saved profiles, port, driver, and embedded/database settings.
+It reads `SPRING_DATABASE_HOST`, `SPRING_DATABASE_SERVER_NAME`,
+`SPRING_DATABASE_NAME`, and `SPRING_DATABASE_PASSWORD` from the selected environment.
+The saved application username must match the template's password-mode `azdadmin`.
+No ARM or Key Vault lookup is needed for local execution. The provision hook already
+stores the password in local azd environment state; the launcher adds no persistence.
+Credentials are supplied only to the Maven child environment, not command arguments
+or a new runtime file. Trusted application code can still log its environment.
+
+Both generated and application-owned root Dockerfiles are supported for these
+Maven applications; local execution does not build or run either Dockerfile.
+Saved datasource bindings are supplied through Spring environment variables.
+Conflicting inherited Spring, JSON, JVM, Maven, or pool-specific overrides are
+rejected instead of silently selecting different runtime configuration.
+MySQL and managed-identity local bindings remain unsupported. Projects from the
+older core-resource-scaffold format must be generated afresh with updated init;
+init does not overwrite existing deployment files.
+
+PostgreSQL TLS settings are preserved. The generated `verify-ca`/`verify-full`
+settings reference `/etc/ssl/certs/ca-certificates.crt`: local execution currently
+requires Linux with that file available. Windows and missing-bundle cases fail
+before launch rather than weakening verification. Local certificate overrides
+and automatic certificate downloads are not supported.
+
+### Manually allow local PostgreSQL access
+
+Provisioned firewall rules allow Container Apps, not your laptop. Before local
+PostgreSQL execution, separately add a rule for your current public IPv4 address.
+Use the selected environment's subscription, `AZURE_RESOURCE_GROUP`, and
+`SPRING_DATABASE_SERVER_NAME`; do not print the entire environment because it
+contains the password. Choose a new rule name unique to your developer session:
+
+```sh
+az postgres flexible-server firewall-rule create \
+  --subscription "<subscription-id>" --resource-group "<AZURE_RESOURCE_GROUP>" \
+  --name "<SPRING_DATABASE_SERVER_NAME>" --rule-name "<unique-developer-rule>" \
+  --start-ip-address "<your-public-ip>" --end-ip-address "<your-public-ip>"
+```
+
+Do not use an all-IP rule. VPN/proxy changes can change the public IP, and your
+network must also permit outbound PostgreSQL connections. Remove only your own
+rule after testing:
+
+```sh
+az postgres flexible-server firewall-rule delete \
+  --subscription "<subscription-id>" --resource-group "<AZURE_RESOURCE_GROUP>" \
+  --name "<SPRING_DATABASE_SERVER_NAME>" --rule-name "<unique-developer-rule>" --yes
+```
+
+`spring run` never creates, broadens, or removes firewall rules. A reachable TCP
+port alone does not prove database authentication or application health.
 
 ## Initial scope
 

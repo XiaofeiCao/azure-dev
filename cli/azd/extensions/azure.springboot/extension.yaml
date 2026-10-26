@@ -2,7 +2,7 @@
 capabilities:
     - custom-commands
     - metadata
-description: Infer Spring Boot application dependencies and generate an azd project. (Beta)
+description: Prepare Spring Boot applications for Azure and run generated Maven projects locally. (Beta)
 displayName: Spring Boot (Beta)
 id: azure.springboot
 language: go

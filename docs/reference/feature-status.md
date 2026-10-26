@@ -79,6 +79,19 @@ Current maturity status of Azure Developer CLI features. See [Feature Stages](..
 | Deployment Stacks | Alpha |
 | Extensions | Alpha |
 
+## Extension Commands
+
+| Feature | Stage |
+|---|---|
+| Spring Boot local execution (`spring run`) | Beta |
+
+The Spring Boot extension is not yet published to the registry. Local execution
+supports trusted generated single-module Maven applications with embedded
+databases or provisioned PostgreSQL/password bindings, without Docker,
+provisioning, or firewall mutation. See
+[supported modes and prerequisites](../../cli/azd/extensions/azure.springboot/README.md#run-locally).
+This does not change the overall Extensions feature stage.
+
 ## Extension gRPC Contracts
 
 | Capability | Contract stage | Stable since | Beta status |
