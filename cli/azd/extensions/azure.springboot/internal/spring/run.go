@@ -170,7 +170,7 @@ func run(
 		maps.Copy(values, resolved)
 	}
 	for key, value := range p.datasourceProperties(values["POSTGRES_HOST"], values["POSTGRES_PASSWORD"]) {
-		name := strings.ToUpper(strings.NewReplacer(".", "_", "-", "").Replace(key))
+		name := strings.ToUpper(strings.NewReplacer(".", "_", "-", "_").Replace(key))
 		values[name] = value
 	}
 	args := exec.NewRunArgs(command, "spring-boot:run").
@@ -407,8 +407,11 @@ func checkRunTLS(options, goos string) error {
 				return nil
 			}
 		}
-		return errors.New("PostgreSQL certificate verification requires the generated Linux CA bundle; " +
-			"run on Linux with /etc/ssl/certs/ca-certificates.crt available; TLS verification is never downgraded")
+		return errors.New(
+			"PostgreSQL certificate verification (sslmode=verify-ca/verify-full) for local execution is supported only on Linux; " +
+				"Windows and macOS are not supported. Run on Linux with /etc/ssl/certs/ca-certificates.crt available; " +
+				"TLS verification is never downgraded",
+		)
 	}
 	return nil
 }
