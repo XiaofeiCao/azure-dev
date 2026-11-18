@@ -1161,6 +1161,82 @@
           }
         }
       ]
+    },
+    {
+      "id": "azure.springboot",
+      "displayName": "Azure Spring Boot",
+      "description": "Prepares Spring Boot services for deployment to Azure Container Apps.",
+      "versions": [
+        {
+          "version": "0.1.1-nightly.20261118",
+          "requiredAzdVersion": ">=1.37.2",
+          "capabilities": [
+            "framework-service-provider",
+            "lifecycle-events",
+            "service-target-provider",
+            "metadata"
+          ],
+          "providers": [
+            {
+              "name": "springbootapp",
+              "type": "service-target",
+              "description": "Packages and deploys Spring Boot applications to Azure Container Apps."
+            }
+          ],
+          "usage": "Use host: springbootapp in azure.yaml.",
+          "examples": null,
+          "artifacts": {
+            "darwin/amd64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "69f9b20a27316a7f65bb5d05a7fb8ec6c4f78b640d36088676a6fef8e2533018"
+              },
+              "entryPoint": "azure-springboot-darwin-amd64",
+              "url": "https://github.com/XiaofeiCao/azure-dev/releases/download/azd-ext-azure-springboot_0.1.1-nightly.20261118/azure-springboot-darwin-amd64.zip"
+            },
+            "darwin/arm64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "402a619d811dbbaceb81be8070f586996a76d12c6ad05b086993c4b54f7b18dd"
+              },
+              "entryPoint": "azure-springboot-darwin-arm64",
+              "url": "https://github.com/XiaofeiCao/azure-dev/releases/download/azd-ext-azure-springboot_0.1.1-nightly.20261118/azure-springboot-darwin-arm64.zip"
+            },
+            "linux/amd64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "2536606348769c42c0aeb3c058eadbae6d21f2923771bf41ae8206a9047be60b"
+              },
+              "entryPoint": "azure-springboot-linux-amd64",
+              "url": "https://github.com/XiaofeiCao/azure-dev/releases/download/azd-ext-azure-springboot_0.1.1-nightly.20261118/azure-springboot-linux-amd64.tar.gz"
+            },
+            "linux/arm64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "54d8dda336e1f968c7b08d9b02bc7dafa1ebbbd21a43ac07d726d04deca1c91f"
+              },
+              "entryPoint": "azure-springboot-linux-arm64",
+              "url": "https://github.com/XiaofeiCao/azure-dev/releases/download/azd-ext-azure-springboot_0.1.1-nightly.20261118/azure-springboot-linux-arm64.tar.gz"
+            },
+            "windows/amd64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "2d6f78d122441ec539fd678148abd9b122591f5c5839cba34051712db87b77ef"
+              },
+              "entryPoint": "azure-springboot-windows-amd64.exe",
+              "url": "https://github.com/XiaofeiCao/azure-dev/releases/download/azd-ext-azure-springboot_0.1.1-nightly.20261118/azure-springboot-windows-amd64.zip"
+            },
+            "windows/arm64": {
+              "checksum": {
+                "algorithm": "sha256",
+                "value": "c7e9a94e6b1838d66c53706b989f6e38ed3a21ea7cfdca980ea6934b88cde93a"
+              },
+              "entryPoint": "azure-springboot-windows-arm64.exe",
+              "url": "https://github.com/XiaofeiCao/azure-dev/releases/download/azd-ext-azure-springboot_0.1.1-nightly.20261118/azure-springboot-windows-arm64.zip"
+            }
+          }
+        }
+      ]
     }
   ]
 }
